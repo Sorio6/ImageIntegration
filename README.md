@@ -12,7 +12,6 @@ The Anki Image Addon allows you to automatically fetch images from the web and i
 * Automatic insertion of selected images into the output field.
 * Persistent configuration of input and output fields per deck and note type.
 * Settings dialog to modify field mappings.
-* Optionally handles multiple images and provides error handling for network issues.
 
 ---
 
@@ -29,7 +28,6 @@ The Anki Image Addon allows you to automatically fetch images from the web and i
 1. Open the Add Card editor.
 2. Click the **"Add Image from Web"** button.
 3. If this is the first time for the deck/note type, select the input (word) and output (image) fields.
-4. Enter a search term (word) if not automatically taken from the input field.
 5. Select an image from the dialog.
 6. The selected image is inserted into the output field.
 
@@ -38,7 +36,7 @@ The Anki Image Addon allows you to automatically fetch images from the web and i
 ## Configuration
 
 * Settings are saved per deck and note type.
-* You can update the input/output field mapping via the **Tools → Image Addon Settings** menu.
+* You can update the input/output field mapping via the **Setings** button in the dialog.
 * Settings are stored in a JSON file inside Anki's user folder.
 
 ---
@@ -46,9 +44,8 @@ The Anki Image Addon allows you to automatically fetch images from the web and i
 ## Requirements
 
 * Anki 2.1+
-* Python environment compatible with Anki (for dev: Zed editor, basedpyright)
+* Python environment compatible with Anki
 * Internet connection for image search
-* Optional: Bing Image Search API key or other image search library
 
 ---
 
