@@ -7,7 +7,7 @@ from aqt.qt import (
     QHBoxLayout,
     QRadioButton,
     QPushButton,
-    QLabel,          # ← MANQUANT
+    QLabel,
     QButtonGroup,
     QListWidget,
     QListView,
@@ -17,6 +17,8 @@ from aqt.qt import (
     QListWidgetItem,
     Qt,
     QUrl,
+    QLineEdit,
+    QCheckBox,
 )
 from PyQt6.QtNetwork import (
     QNetworkAccessManager,
@@ -41,8 +43,7 @@ def add_editor_button(buttons: List[str], editor: Editor) -> List[str]:
     editor._links["image_integration"] = on_editor_btn_click
     iconstr = os.path.join(asset_dir, "icon.png")
 
-    tooltip_text = (
-            "Images integration")
+    tooltip_text = ("Images integration")
 
     button = editor.addButton(
         iconstr,
@@ -50,15 +51,15 @@ def add_editor_button(buttons: List[str], editor: Editor) -> List[str]:
         on_editor_btn_click,
         keys="",
         tip=tooltip_text,
-        disables = False
+        disables=False
     )
     buttons.append(button)
 
     return buttons
-    
+
 def on_editor_btn_click(editor: Editor):
     deck_id = editor.card.did if editor.card is not None else editor.parentWindow.deck_chooser.selectedId()
-    
+
     if editor.note is not None:
         note_type_id = editor.note.mid
     elif editor.card is not None:
@@ -68,17 +69,158 @@ def on_editor_btn_click(editor: Editor):
 
     input_field, output_field = get_fields_from_config(deck_id, note_type_id, editor)
     word = editor.note[input_field]
-    selected_url = select_images(word)
+
+    # Apply suffix if enabled
+    suffix, suffix_enabled = get_suffix_from_config(deck_id, note_type_id)
+    if suffix_enabled and suffix:
+        search_query = f"{word} {suffix}"
+    else:
+        search_query = word
+
+    selected_url = select_images(search_query, word, deck_id, note_type_id, editor)
 
     if selected_url:
         insert_image_into_field(selected_url, output_field, editor)
 
+#===================== settings =====================
 
-#===================== images search=====================
-def select_images(word: str, max_size: int = 150):
+def get_suffix_from_config(deck_id: int, note_type_id: int) -> Tuple[str, bool]:
+    """Returns (suffix, enabled). Defaults to ('', False) if not set."""
+    try:
+        with open(config, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        note_cfg = cfg.get(str(deck_id), {}).get(str(note_type_id), {})
+        suffix = note_cfg.get("suffix", "")
+        suffix_enabled = note_cfg.get("suffix_enabled", False)
+        return suffix, suffix_enabled
+    except Exception:
+        return "", False
+
+def save_suffix_to_config(deck_id: int, note_type_id: int, suffix: str, suffix_enabled: bool):
+    cfg = {}
+    if os.path.exists(config):
+        try:
+            with open(config, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except json.JSONDecodeError:
+            cfg = {}
+
+    if str(deck_id) not in cfg:
+        cfg[str(deck_id)] = {}
+    if str(note_type_id) not in cfg[str(deck_id)]:
+        cfg[str(deck_id)][str(note_type_id)] = {}
+
+    cfg[str(deck_id)][str(note_type_id)]["suffix"] = suffix
+    cfg[str(deck_id)][str(note_type_id)]["suffix_enabled"] = suffix_enabled
+
+    os.makedirs(os.path.dirname(config), exist_ok=True)
+    with open(config, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+def open_settings_dialog(deck_id: int, note_type_id: int, editor: Editor):
+    """Open a settings dialog to change input/output fields and search suffix."""
+    dialog = QDialog()
+    dialog.setWindowTitle("Image Integration – Settings")
+    layout = QVBoxLayout(dialog)
+    layout.setSpacing(12)
+
+    # ── Fields section ──
+    fields_label = QLabel("<b>Fields</b>")
+    fields_label.setTextFormat(Qt.TextFormat.RichText)
+    layout.addWidget(fields_label)
+
+    try:
+        with open(config, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        note_cfg = cfg.get(str(deck_id), {}).get(str(note_type_id), {})
+        current_input = note_cfg.get("input", "—")
+        current_output = note_cfg.get("output") or note_cfg.get("ouput") or "—"
+    except Exception:
+        current_input = "—"
+        current_output = "—"
+
+    current_fields_label = QLabel(f"Input field: <b>{current_input}</b>　　Output field: <b>{current_output}</b>")
+    current_fields_label.setTextFormat(Qt.TextFormat.RichText)
+    layout.addWidget(current_fields_label)
+
+    btn_change = QPushButton("Change fields…")
+    layout.addWidget(btn_change)
+
+    # ── Separator ──
+    sep = QLabel("<hr>")
+    sep.setTextFormat(Qt.TextFormat.RichText)
+    layout.addWidget(sep)
+
+    # ── Suffix section ──
+    suffix_label = QLabel("<b>Search suffix</b>")
+    suffix_label.setTextFormat(Qt.TextFormat.RichText)
+    layout.addWidget(suffix_label)
+
+    suffix_desc = QLabel('Word appended to the search query.\nExample: input = "house", suffix = "drawing"  →  search = "house drawing"')
+    suffix_desc.setWordWrap(True)
+    layout.addWidget(suffix_desc)
+
+    suffix_row = QHBoxLayout()
+    suffix_input = QLineEdit()
+    suffix_input.setPlaceholderText("e.g. drawing, photo, cartoon…")
+
+    suffix_toggle = QCheckBox("Enabled")
+
+    # Load current values
+    current_suffix, current_enabled = get_suffix_from_config(deck_id, note_type_id)
+    suffix_input.setText(current_suffix)
+    suffix_toggle.setChecked(current_enabled)
+
+    suffix_row.addWidget(suffix_input)
+    suffix_row.addWidget(suffix_toggle)
+    layout.addLayout(suffix_row)
+
+    btn_save_suffix = QPushButton("Save suffix settings")
+    layout.addWidget(btn_save_suffix)
+
+    # ── Close ──
+    btn_close = QPushButton("Close")
+    layout.addWidget(btn_close)
+
+    # ── Handlers ──
+    def on_change_fields():
+        dialog.accept()
+        new_input, new_output = ask_user_for_fields(deck_id, note_type_id, editor)
+        if new_input and new_output:
+            showInfo(f"Fields updated!\nInput: {new_input}\nOutput: {new_output}")
+
+    def on_save_suffix():
+        suffix = suffix_input.text().strip()
+        enabled = suffix_toggle.isChecked()
+        save_suffix_to_config(deck_id, note_type_id, suffix, enabled)
+        state = "enabled" if enabled else "disabled"
+        showInfo(f"Suffix saved: \"{suffix}\" ({state})")
+
+    btn_change.clicked.connect(on_change_fields)
+    btn_save_suffix.clicked.connect(on_save_suffix)
+    btn_close.clicked.connect(dialog.reject)
+
+    dialog.setLayout(layout)
+    dialog.exec()
+
+#===================== images search =====================
+
+def select_images(search_query: str, display_word: str, deck_id: int, note_type_id: int, editor: Editor, max_size: int = 150):
     dialog = QDialog()
     dialog.setWindowTitle("Select an Image")
     layout = QVBoxLayout(dialog)
+
+    # ── Top bar ──
+    top_bar = QHBoxLayout()
+    title_label = QLabel(f"Search: <b>{search_query}</b>")
+    title_label.setTextFormat(Qt.TextFormat.RichText)
+    top_bar.addWidget(title_label)
+    top_bar.addStretch()
+
+    btn_settings = QPushButton("⚙ Settings")
+    btn_settings.setFixedWidth(100)
+    top_bar.addWidget(btn_settings)
+    layout.addLayout(top_bar)
 
     list_widget = QListWidget()
     list_widget.setViewMode(QListView.ViewMode.IconMode)
@@ -137,7 +279,7 @@ def select_images(word: str, max_size: int = 150):
 
     def load_images(offset: int = 0):
         btn_more.setEnabled(False)
-        urls = search_images_duckduckgo(word, max_results=10, offset=offset)
+        urls = search_images_duckduckgo(search_query, max_results=10, offset=offset)
         for url in urls:
             request = QNetworkRequest(QUrl(url))
             request.setRawHeader(b"User-Agent", b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
@@ -150,12 +292,17 @@ def select_images(word: str, max_size: int = 150):
 
     btn_more.clicked.connect(on_load_more)
 
+    def on_settings():
+        open_settings_dialog(deck_id, note_type_id, editor)
+
+    btn_settings.clicked.connect(on_settings)
+
     dialog.show()
     load_images(0)
 
     dialog.exec()
     return selected_url["value"]
- 
+
 def insert_image_into_field(url: str, field_name: str, editor: Editor):
     try:
         response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -168,12 +315,12 @@ def insert_image_into_field(url: str, field_name: str, editor: Editor):
         fname = mw.col.media.write_data(f"image_integration_{field_name}{ext}", response.content)
 
         img_tag = f'<img src="{fname}">'
-        editor.note[field_name] += img_tag  # append to existing content
+        editor.note[field_name] += img_tag
         editor.loadNote()
 
     except Exception as e:
         showInfo(f"Failed to insert image: {str(e)}")
- 
+
 def search_images_duckduckgo(query: str, max_results: int = 10, offset: int = 0) -> List[str]:
     vqd = get_vqd(query)
 
@@ -183,7 +330,7 @@ def search_images_duckduckgo(query: str, max_results: int = 10, offset: int = 0)
         "vqd": vqd,
         "o": "json",
         "p": "1",
-        "s": offset,   # offset parameter
+        "s": offset,
     }
     headers = {
         "User-Agent": "Mozilla/5.0",
@@ -198,52 +345,50 @@ def search_images_duckduckgo(query: str, max_results: int = 10, offset: int = 0)
     urls = [img["image"] for img in results[:max_results]]
 
     return urls
-    
+
 def get_vqd(query: str) -> str:
     url = "https://duckduckgo.com/"
     params = {"q": query}
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     resp = requests.get(url, params=params, headers=headers)
     resp.raise_for_status()
 
-    # vqd is embedded in the page
     match = re.search(r'vqd="([^"]+)"', resp.text)
     if not match:
         raise RuntimeError("Could not extract vqd token")
 
     return match.group(1)
-    
 
-#=====================  fields =====================
+
+#===================== fields =====================
+
 def get_fields_from_config(deck_id: int, note_type_id: int, editor: Editor) -> Tuple[str, str]:
-    with open(config, "r", encoding="utf8") as f:
-        cfg = json.load(f)
-        
+    try:
+        with open(config, "r", encoding="utf8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return ask_user_for_fields(deck_id, note_type_id, editor)
+
     deck_cfg = cfg.get(str(deck_id), {})
     note_cfg = deck_cfg.get(str(note_type_id), {})
-    
+
     input_field = note_cfg.get("input")
-    output_field = note_cfg.get("output") or note_cfg.get("ouput")  # handle typo if exists
-    
-    
+    output_field = note_cfg.get("output") or note_cfg.get("ouput")
+
     if input_field and output_field:
         return input_field, output_field
 
     return ask_user_for_fields(deck_id, note_type_id, editor)
 
 def ask_user_for_fields(deck_id: int, note_type_id: int, editor: Editor) -> Tuple[str, str]:
-    """Ask the user to select input and output fields via a popup with radio buttons."""
-    
     note = editor.note
-    
+
     if note is None:
         showInfo("No note available to select fields.")
         return "", ""
-    
-    fields = note.keys()  # all field names in the current note
+
+    fields = note.keys()
 
     def select_field_dialog(title: str) -> str:
         dialog = QDialog()
@@ -252,7 +397,7 @@ def ask_user_for_fields(deck_id: int, note_type_id: int, editor: Editor) -> Tupl
 
         label = QLabel(f"Select {title}:")
         layout.addWidget(label)
-        
+
         button_group = QButtonGroup(dialog)
         button_group.setExclusive(True)
 
@@ -279,20 +424,14 @@ def ask_user_for_fields(deck_id: int, note_type_id: int, editor: Editor) -> Tupl
         dialog.exec()
         return selected_field["value"] or ""
 
-    # Ask for input field
     input_field = select_field_dialog("Input Field")
-    # Ask for output field
     output_field = select_field_dialog("Output Field")
 
-    # Save the selection to config
     save_fields_to_config(deck_id, note_type_id, input_field, output_field)
-    
+
     return input_field, output_field
 
 def save_fields_to_config(deck_id: int, note_type_id: int, input_field: str, output_field: str):
-    """
-    Saves nested config like {deckid: {noteid: {input, output}}}
-    """
     cfg = {}
     if os.path.exists(config):
         try:
@@ -304,7 +443,10 @@ def save_fields_to_config(deck_id: int, note_type_id: int, input_field: str, out
     if str(deck_id) not in cfg:
         cfg[str(deck_id)] = {}
 
-    cfg[str(deck_id)][str(note_type_id)] = {"input": input_field, "output": output_field}
+    existing = cfg[str(deck_id)].get(str(note_type_id), {})
+    existing["input"] = input_field
+    existing["output"] = output_field
+    cfg[str(deck_id)][str(note_type_id)] = existing
 
     os.makedirs(os.path.dirname(config), exist_ok=True)
     with open(config, "w", encoding="utf-8") as f:
